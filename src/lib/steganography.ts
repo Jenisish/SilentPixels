@@ -1,42 +1,154 @@
-// Steganography utility functions
 export class SteganographyService {
-  // Convert text to binary
+  private static SIGNATURE = "SPv2"; // Signature to identify new encrypted format
+
+  // Convert text to binary (improved for UTF-8)
   static textToBinary(text: string): string {
-    return text.split('').map(char => 
-      char.charCodeAt(0).toString(2).padStart(8, '0')
-    ).join('');
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    return Array.from(bytes).map(byte => byte.toString(2).padStart(8, '0')).join('');
   }
 
-  // Convert binary to text
+  // Convert binary to text (improved for UTF-8)
   static binaryToText(binary: string): string {
     const bytes = binary.match(/.{1,8}/g) || [];
-    return bytes.map(byte => 
-      String.fromCharCode(parseInt(byte, 2))
-    ).join('');
+    const uint8 = new Uint8Array(bytes.map(byte => parseInt(byte, 2)));
+    return new TextDecoder().decode(uint8);
   }
 
-  // Encode message into media
-  static async encode(file: File, message: string): Promise<string> {
-    if (file.type.startsWith('video/')) {
-      return this.encodeVideo(file, message);
-    } else if (file.type.startsWith('audio/')) {
-      return this.encodeAudio(file, message);
-    }
-    return this.encodeImage(file, message);
+  // Convert ArrayBuffer to binary string
+  private static arrayBufferToBinary(buffer: ArrayBuffer): string {
+    const uint8 = new Uint8Array(buffer);
+    return Array.from(uint8).map(byte => byte.toString(2).padStart(8, '0')).join('');
   }
 
-  // Decode message from media
-  static async decode(file: File): Promise<string> {
-    if (file.type.startsWith('video/')) {
-      return this.decodeVideo(file);
-    } else if (file.type.startsWith('audio/')) {
-      return this.decodeAudio(file);
+  // Convert binary string to ArrayBuffer
+  private static binaryToArrayBuffer(binary: string): ArrayBuffer {
+    const byteLength = Math.ceil(binary.length / 8);
+    const buffer = new ArrayBuffer(byteLength);
+    const view = new Uint8Array(buffer);
+    for (let i = 0; i < byteLength; i++) {
+      const start = i * 8;
+      const end = Math.min(start + 8, binary.length);
+      const byteStr = binary.slice(start, end).padEnd(8, '0');
+      view[i] = parseInt(byteStr, 2);
     }
-    return this.decodeImage(file);
+    return buffer;
+  }
+
+  // Encrypt message with key
+  private static async encryptMessage(message: string, key: string): Promise<string> {
+    const salt = crypto.getRandomValues(new Uint8Array(16)); // 16 bytes salt
+    const iv = crypto.getRandomValues(new Uint8Array(12));   // 12 bytes IV
+    const password = new TextEncoder().encode(key);
+
+    const derivedKey = await crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations: 10000,
+        hash: "SHA-256",
+      },
+      await crypto.subtle.importKey("raw", password, { name: "PBKDF2" }, false, ["deriveKey"]),
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt"]
+    );
+
+    const encodedMessage = new TextEncoder().encode(message);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      derivedKey,
+      encodedMessage
+    );
+
+    const signatureBinary = this.textToBinary(this.SIGNATURE); // "SPv2" (32 bits)
+    const saltBinary = this.arrayBufferToBinary(salt.buffer);  // 128 bits
+    const ivBinary = this.arrayBufferToBinary(iv.buffer);      // 96 bits
+    const encryptedBinary = this.arrayBufferToBinary(encrypted);
+
+    return signatureBinary + saltBinary + ivBinary + encryptedBinary;
+  }
+
+  // Decrypt hidden data with key
+  private static async decryptHiddenData(hiddenDataBinary: string, key: string): Promise<string> {
+    const signatureLength = this.textToBinary(this.SIGNATURE).length; // 32 bits
+    const signatureBinary = hiddenDataBinary.slice(0, signatureLength);
+
+    if (signatureBinary !== this.textToBinary(this.SIGNATURE)) {
+      // Old format: no encryption
+      return this.binaryToText(hiddenDataBinary);
+    }
+
+    const saltBinary = hiddenDataBinary.slice(signatureLength, signatureLength + 128);
+    const ivBinary = hiddenDataBinary.slice(signatureLength + 128, signatureLength + 128 + 96);
+    const encryptedBinary = hiddenDataBinary.slice(signatureLength + 128 + 96);
+
+    const salt = this.binaryToArrayBuffer(saltBinary);
+    const iv = this.binaryToArrayBuffer(ivBinary);
+    const encrypted = this.binaryToArrayBuffer(encryptedBinary);
+    const password = new TextEncoder().encode(key);
+
+    const derivedKey = await crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations: 10000,
+        hash: "SHA-256",
+      },
+      await crypto.subtle.importKey("raw", password, { name: "PBKDF2" }, false, ["deriveKey"]),
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+
+    try {
+      const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        derivedKey,
+        encrypted
+      );
+      return new TextDecoder().decode(decrypted);
+    } catch (err) {
+      throw new Error("Incorrect key or corrupted data");
+    }
+  }
+
+  // Encode message into media with optional key
+  static async encode(file: File, message: string, key: string = ''): Promise<string> {
+    let hiddenDataBinary = key ? await this.encryptMessage(message, key) : this.textToBinary(message);
+    const totalLength = hiddenDataBinary.length;
+    if (totalLength > 2 ** 31 - 1) {
+      throw new Error("Message too long to encode");
+    }
+    const lengthBinary = totalLength.toString(2).padStart(32, '0');
+
+    if (file.type.startsWith('image/')) {
+      return this.encodeImage(file, lengthBinary, hiddenDataBinary);
+    } else if (file.type.startsWith('video/')) {
+      return this.encodeVideo(file, lengthBinary, hiddenDataBinary);
+    } else if (file.type.startsWith('audio/')) {
+      return this.encodeAudio(file, lengthBinary, hiddenDataBinary);
+    }
+    throw new Error("Unsupported file type");
+  }
+
+  // Decode message from media with optional key
+  static async decode(file: File, key: string = ''): Promise<string> {
+    let hiddenDataBinary: string;
+    if (file.type.startsWith('image/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromImage(file);
+    } else if (file.type.startsWith('video/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromVideo(file);
+    } else if (file.type.startsWith('audio/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromAudio(file);
+    } else {
+      throw new Error("Unsupported file type");
+    }
+    return this.decryptHiddenData(hiddenDataBinary, key);
   }
 
   // Image encoding
-  private static async encodeImage(image: File, message: string): Promise<string> {
+  private static async encodeImage(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const reader = new FileReader();
@@ -60,47 +172,33 @@ export class SteganographyService {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
 
-        // Convert message to binary
-        const binaryMessage = this.textToBinary(message);
-        const messageLength = binaryMessage.length;
-
-        // Check if message can fit in image
-        if (messageLength > (data.length / 4) * 3) {
+        // Check capacity (corrected to use full data length)
+        if (hiddenDataBinary.length > data.length - 32) {
           reject(new Error('Message is too long for this image'));
           return;
         }
-
-        // Store message length at the beginning
-        const lengthBinary = messageLength.toString(2).padStart(32, '0');
-        let binaryIndex = 0;
 
         // Encode length
         for (let i = 0; i < 32; i++) {
           data[i] = (data[i] & 254) | parseInt(lengthBinary[i]);
         }
 
-        // Encode message
-        for (let i = 32; i < messageLength + 32; i++) {
-          if (binaryIndex < binaryMessage.length) {
-            data[i] = (data[i] & 254) | parseInt(binaryMessage[binaryIndex]);
-            binaryIndex++;
-          }
+        // Encode hidden data
+        for (let i = 0; i < hiddenDataBinary.length; i++) {
+          data[i + 32] = (data[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
         }
 
         ctx.putImageData(imageData, 0, 0);
         resolve(canvas.toDataURL());
       };
 
-      img.onerror = () => {
-        reject(new Error('Failed to load image'));
-      };
-
-      reader.readAsDataURL(image);
+      img.onerror = () => reject(new Error('Failed to load image'));
+      reader.readAsDataURL(file);
     });
   }
 
   // Image decoding
-  private static async decodeImage(image: File): Promise<string> {
+  private static async extractHiddenDataFromImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const reader = new FileReader();
@@ -124,33 +222,27 @@ export class SteganographyService {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
 
-        // Extract length
         let lengthBinary = '';
         for (let i = 0; i < 32; i++) {
           lengthBinary += data[i] & 1;
         }
-        const messageLength = parseInt(lengthBinary, 2);
+        const totalLength = parseInt(lengthBinary, 2);
 
-        // Extract message
-        let binaryMessage = '';
-        for (let i = 32; i < messageLength + 32; i++) {
-          binaryMessage += data[i] & 1;
+        let hiddenDataBinary = '';
+        for (let i = 32; i < totalLength + 32; i++) {
+          hiddenDataBinary += data[i] & 1;
         }
 
-        const message = this.binaryToText(binaryMessage);
-        resolve(message);
+        resolve(hiddenDataBinary);
       };
 
-      img.onerror = () => {
-        reject(new Error('Failed to load image'));
-      };
-
-      reader.readAsDataURL(image);
+      img.onerror = () => reject(new Error('Failed to load image'));
+      reader.readAsDataURL(file);
     });
   }
 
   // Video encoding
-  private static async encodeVideo(video: File, message: string): Promise<string> {
+  private static async encodeVideo(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const videoElement = document.createElement('video');
       const reader = new FileReader();
@@ -167,7 +259,6 @@ export class SteganographyService {
           return;
         }
 
-        // Get the first frame
         canvas.width = videoElement.videoWidth;
         canvas.height = videoElement.videoHeight;
         ctx.drawImage(videoElement, 0, 0);
@@ -175,47 +266,30 @@ export class SteganographyService {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
 
-        // Convert message to binary
-        const binaryMessage = this.textToBinary(message);
-        const messageLength = binaryMessage.length;
-
-        // Check if message can fit in frame
-        if (messageLength > (data.length / 4) * 3) {
+        if (hiddenDataBinary.length > data.length - 32) {
           reject(new Error('Message is too long for this video frame'));
           return;
         }
 
-        // Store message length at the beginning
-        const lengthBinary = messageLength.toString(2).padStart(32, '0');
-        let binaryIndex = 0;
-
-        // Encode length
         for (let i = 0; i < 32; i++) {
           data[i] = (data[i] & 254) | parseInt(lengthBinary[i]);
         }
 
-        // Encode message
-        for (let i = 32; i < messageLength + 32; i++) {
-          if (binaryIndex < binaryMessage.length) {
-            data[i] = (data[i] & 254) | parseInt(binaryMessage[binaryIndex]);
-            binaryIndex++;
-          }
+        for (let i = 0; i < hiddenDataBinary.length; i++) {
+          data[i + 32] = (data[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
         }
 
         ctx.putImageData(imageData, 0, 0);
         resolve(canvas.toDataURL());
       };
 
-      videoElement.onerror = () => {
-        reject(new Error('Failed to load video'));
-      };
-
-      reader.readAsDataURL(video);
+      videoElement.onerror = () => reject(new Error('Failed to load video'));
+      reader.readAsDataURL(file);
     });
   }
 
   // Video decoding
-  private static async decodeVideo(video: File): Promise<string> {
+  private static async extractHiddenDataFromVideo(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const videoElement = document.createElement('video');
       const reader = new FileReader();
@@ -232,7 +306,6 @@ export class SteganographyService {
           return;
         }
 
-        // Get the first frame
         canvas.width = videoElement.videoWidth;
         canvas.height = videoElement.videoHeight;
         ctx.drawImage(videoElement, 0, 0);
@@ -240,33 +313,27 @@ export class SteganographyService {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
 
-        // Extract length
         let lengthBinary = '';
         for (let i = 0; i < 32; i++) {
           lengthBinary += data[i] & 1;
         }
-        const messageLength = parseInt(lengthBinary, 2);
+        const totalLength = parseInt(lengthBinary, 2);
 
-        // Extract message
-        let binaryMessage = '';
-        for (let i = 32; i < messageLength + 32; i++) {
-          binaryMessage += data[i] & 1;
+        let hiddenDataBinary = '';
+        for (let i = 32; i < totalLength + 32; i++) {
+          hiddenDataBinary += data[i] & 1;
         }
 
-        const message = this.binaryToText(binaryMessage);
-        resolve(message);
+        resolve(hiddenDataBinary);
       };
 
-      videoElement.onerror = () => {
-        reject(new Error('Failed to load video'));
-      };
-
-      reader.readAsDataURL(video);
+      videoElement.onerror = () => reject(new Error('Failed to load video'));
+      reader.readAsDataURL(file);
     });
   }
 
   // Audio encoding
-  private static async encodeAudio(audio: File, message: string): Promise<string> {
+  private static async encodeAudio(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const audioContext = new AudioContext();
       const reader = new FileReader();
@@ -275,51 +342,35 @@ export class SteganographyService {
         try {
           const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
           const channelData = audioBuffer.getChannelData(0);
-          
-          // Convert message to binary
-          const binaryMessage = this.textToBinary(message);
-          const messageLength = binaryMessage.length;
 
-          // Check if message can fit in audio
-          if (messageLength > channelData.length / 8) {
+          if (hiddenDataBinary.length > channelData.length - 32) {
             reject(new Error('Message is too long for this audio file'));
             return;
           }
 
-          // Store message length at the beginning
-          const lengthBinary = messageLength.toString(2).padStart(32, '0');
-          
-          // Create modified buffer
           const modifiedBuffer = audioContext.createBuffer(
             audioBuffer.numberOfChannels,
             audioBuffer.length,
             audioBuffer.sampleRate
           );
-          
           const modifiedData = modifiedBuffer.getChannelData(0);
-          
-          // Copy original data
           modifiedData.set(channelData);
 
-          // Encode length
           for (let i = 0; i < 32; i++) {
-            modifiedData[i] = Math.floor(channelData[i] * 1000) / 1000 + 
+            modifiedData[i] = Math.floor(channelData[i] * 1000) / 1000 +
               (parseInt(lengthBinary[i]) * 0.0001);
           }
 
-          // Encode message
-          for (let i = 0; i < messageLength; i++) {
-            modifiedData[i + 32] = Math.floor(channelData[i + 32] * 1000) / 1000 + 
-              (parseInt(binaryMessage[i]) * 0.0001);
+          for (let i = 0; i < hiddenDataBinary.length; i++) {
+            modifiedData[i + 32] = Math.floor(channelData[i + 32] * 1000) / 1000 +
+              (parseInt(hiddenDataBinary[i]) * 0.0001);
           }
 
-          // Convert to WAV
           const offlineContext = new OfflineAudioContext(
             modifiedBuffer.numberOfChannels,
             modifiedBuffer.length,
             modifiedBuffer.sampleRate
           );
-
           const source = offlineContext.createBufferSource();
           source.buffer = modifiedBuffer;
           source.connect(offlineContext.destination);
@@ -327,24 +378,19 @@ export class SteganographyService {
 
           const renderedBuffer = await offlineContext.startRendering();
           const wavBlob = this.bufferToWav(renderedBuffer);
-          const url = URL.createObjectURL(wavBlob);
-          
-          resolve(url);
+          resolve(URL.createObjectURL(wavBlob));
         } catch (err) {
           reject(new Error('Failed to process audio file'));
         }
       };
 
-      reader.onerror = () => {
-        reject(new Error('Failed to load audio file'));
-      };
-
-      reader.readAsArrayBuffer(audio);
+      reader.onerror = () => reject(new Error('Failed to load audio file'));
+      reader.readAsArrayBuffer(file);
     });
   }
 
   // Audio decoding
-  private static async decodeAudio(audio: File): Promise<string> {
+  private static async extractHiddenDataFromAudio(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const audioContext = new AudioContext();
       const reader = new FileReader();
@@ -354,37 +400,29 @@ export class SteganographyService {
           const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
           const channelData = audioBuffer.getChannelData(0);
 
-          // Extract length
           let lengthBinary = '';
           for (let i = 0; i < 32; i++) {
-            const sample = channelData[i];
-            lengthBinary += Math.round((sample * 10000) % 2);
+            lengthBinary += Math.round((channelData[i] * 10000) % 2);
           }
-          const messageLength = parseInt(lengthBinary, 2);
+          const totalLength = parseInt(lengthBinary, 2);
 
-          // Extract message
-          let binaryMessage = '';
-          for (let i = 0; i < messageLength; i++) {
-            const sample = channelData[i + 32];
-            binaryMessage += Math.round((sample * 10000) % 2);
+          let hiddenDataBinary = '';
+          for (let i = 32; i < totalLength + 32; i++) {
+            hiddenDataBinary += Math.round((channelData[i] * 10000) % 2);
           }
 
-          const message = this.binaryToText(binaryMessage);
-          resolve(message);
+          resolve(hiddenDataBinary);
         } catch (err) {
           reject(new Error('Failed to process audio file'));
         }
       };
 
-      reader.onerror = () => {
-        reject(new Error('Failed to load audio file'));
-      };
-
-      reader.readAsArrayBuffer(audio);
+      reader.onerror = () => reject(new Error('Failed to load audio file'));
+      reader.readAsArrayBuffer(file);
     });
   }
 
-  // Helper function to convert AudioBuffer to WAV
+  // Helper function to convert AudioBuffer to WAV (unchanged)
   private static bufferToWav(buffer: AudioBuffer): Blob {
     const numOfChannels = buffer.numberOfChannels;
     const length = buffer.length * numOfChannels * 2;
@@ -392,7 +430,6 @@ export class SteganographyService {
     const arrayBuffer = new ArrayBuffer(44 + length);
     const view = new DataView(arrayBuffer);
 
-    // Write WAV header
     const writeString = (view: DataView, offset: number, string: string) => {
       for (let i = 0; i < string.length; i++) {
         view.setUint8(offset + i, string.charCodeAt(i));
@@ -413,7 +450,6 @@ export class SteganographyService {
     writeString(view, 36, 'data');
     view.setUint32(40, length, true);
 
-    // Write audio data
     const channelData = buffer.getChannelData(0);
     let offset = 44;
     for (let i = 0; i < channelData.length; i++) {

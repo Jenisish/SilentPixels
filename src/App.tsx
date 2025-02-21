@@ -1,3 +1,4 @@
+// App.tsx
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { MediaPreview } from './components/MediaPreview';
@@ -9,6 +10,7 @@ function App() {
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video' | 'audio'>('image');
   const [message, setMessage] = useState('');
+  const [key, setKey] = useState(''); // New state for key
   const [decodedMessage, setDecodedMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'encode' | 'decode'>('encode');
@@ -22,31 +24,29 @@ function App() {
     setError(null);
     setEncodedMediaUrl(null);
     setDecodedMessage('');
+    setKey(''); // Reset key on new file
   }, []);
 
   const handleEncode = useCallback(async () => {
     if (!inputFile || !message) {
-      setError('Please provide both a media file and a message');
+      setError('Please provide a media file and a message');
       return;
     }
 
     try {
-      const encodedMedia = await SteganographyService.encode(inputFile, message);
+      const encodedMedia = await SteganographyService.encode(inputFile, message, key);
       setEncodedMediaUrl(encodedMedia);
-      
-      // Create download link
+
       const link = document.createElement('a');
       link.href = encodedMedia;
-      link.download = `encoded-${mediaType}.${
-        mediaType === 'video' ? 'mp4' : mediaType === 'audio' ? 'wav' : 'png'
-      }`;
+      link.download = `encoded-${mediaType}.${mediaType === 'video' ? 'mp4' : mediaType === 'audio' ? 'wav' : 'png'}`;
       link.click();
-      
+
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [inputFile, message, mediaType]);
+  }, [inputFile, message, key, mediaType]);
 
   const handleDecode = useCallback(async () => {
     if (!inputFile) {
@@ -55,13 +55,13 @@ function App() {
     }
 
     try {
-      const message = await SteganographyService.decode(inputFile);
+      const message = await SteganographyService.decode(inputFile, key);
       setDecodedMessage(message);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [inputFile]);
+  }, [inputFile, key]);
 
   const handleShare = useCallback(async () => {
     if (!encodedMediaUrl) return;
@@ -71,16 +71,9 @@ function App() {
       const blob = await response.blob();
       const file = new File(
         [blob],
-        `encoded-${mediaType}.${
-          mediaType === 'video' ? 'mp4' : mediaType === 'audio' ? 'wav' : 'png'
-        }`,
+        `encoded-${mediaType}.${mediaType === 'video' ? 'mp4' : mediaType === 'audio' ? 'wav' : 'png'}`,
         {
-          type:
-            mediaType === 'video'
-              ? 'video/mp4'
-              : mediaType === 'audio'
-              ? 'audio/wav'
-              : 'image/png',
+          type: mediaType === 'video' ? 'video/mp4' : mediaType === 'audio' ? 'audio/wav' : 'image/png',
         }
       );
 
@@ -88,7 +81,7 @@ function App() {
         await navigator.share({
           files: [file],
           title: 'Encoded Media',
-          text: 'Media encoded with SilentPixels'
+          text: 'Media encoded with SilentPixels',
         });
       } else {
         setError('Sharing is not supported on this device');
@@ -100,10 +93,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <img
+        src="/logo.png" // Replace with the actual path or URL to your logo image
+        alt="Logo"
+        className="absolute top-5 left-5 w-20 h-20 object-contain" // Positioned 20px from top and left, 80px x 80px size
+      />
+
+      <div className="max-w-2xl mx-auto p-6 pt-6"> 
       <div className="max-w-2xl mx-auto p-6">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">SilentPixels</h1>
-          <p className="text-gray-600">Masking Secrets in Mixed Media with LSB😎</p>
+          <p className="text-gray-600">Masking Secrets in Mixed Media with LSB</p>
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
@@ -111,9 +111,7 @@ function App() {
             <button
               onClick={() => setMode('encode')}
               className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${
-                mode === 'encode'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700'
+                mode === 'encode' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
               }`}
             >
               <Lock className="w-4 h-4" /> Encode
@@ -121,9 +119,7 @@ function App() {
             <button
               onClick={() => setMode('decode')}
               className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${
-                mode === 'decode'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700'
+                mode === 'decode' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
               }`}
             >
               <Unlock className="w-4 h-4" /> Decode
@@ -135,9 +131,7 @@ function App() {
               <button
                 onClick={() => setMediaType('image')}
                 className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${
-                  mediaType === 'image'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700'
+                  mediaType === 'image' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'
                 }`}
               >
                 <Image className="w-4 h-4" /> Image
@@ -145,9 +139,7 @@ function App() {
               <button
                 onClick={() => setMediaType('video')}
                 className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${
-                  mediaType === 'video'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700'
+                  mediaType === 'video' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'
                 }`}
               >
                 <Video className="w-4 h-4" /> Video
@@ -155,9 +147,7 @@ function App() {
               <button
                 onClick={() => setMediaType('audio')}
                 className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${
-                  mediaType === 'audio'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700'
+                  mediaType === 'audio' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'
                 }`}
               >
                 <Music className="w-4 h-4" /> Audio
@@ -181,8 +171,27 @@ function App() {
                 placeholder="Enter your secret message..."
                 className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              <input
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="Enter encryption key (optional)"
+                className="w-full mt-2 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
             </div>
           )}
+
+          {mode === 'decode' && (
+            <div className="mb-6">
+              <input
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="Enter decryption key (if encoded with key)"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+         )}
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 rounded-lg flex items-center gap-2 text-red-700">
@@ -227,6 +236,7 @@ function App() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
