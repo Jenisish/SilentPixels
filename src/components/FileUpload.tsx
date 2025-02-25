@@ -3,15 +3,22 @@ import { Upload } from 'lucide-react';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
-  accept?: string;
-  mediaType: 'image' | 'video' | 'audio';
+  mediaType: 'image' | 'video' | 'audio' | 'document';
 }
 
 export function FileUpload({ onFileSelect, mediaType }: FileUploadProps) {
   const acceptMap = {
     image: 'image/*',
     video: 'video/*',
-    audio: 'audio/*'
+    audio: 'audio/*',
+    document: 'text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  };
+
+  const fileTypeText = {
+    image: 'PNG, JPG, or GIF',
+    video: 'MP4 or WebM',
+    audio: 'MP3 or WAV',
+    document: 'TXT, PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX'
   };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -24,12 +31,6 @@ export function FileUpload({ onFileSelect, mediaType }: FileUploadProps) {
     const file = e.target.files?.[0];
     if (file) onFileSelect(file);
   }, [onFileSelect]);
-
-  const fileTypeText = {
-    image: 'PNG, JPG, or GIF',
-    video: 'MP4 or WebM',
-    audio: 'MP3 or WAV'
-  };
 
   return (
     <div

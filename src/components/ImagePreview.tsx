@@ -1,4 +1,3 @@
-import React from 'react';
 import { ImageIcon, Video } from 'lucide-react';
 
 interface MediaPreviewProps {

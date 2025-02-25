@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+#std{
+    font-size: 12px;
+    font-style: italic;
+
+}

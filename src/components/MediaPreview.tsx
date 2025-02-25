@@ -1,10 +1,9 @@
-import React from 'react';
 import { ImageIcon, Video, Music } from 'lucide-react';
 
 interface MediaPreviewProps {
   src: string | null;
   alt: string;
-  type: 'image' | 'video' | 'audio';
+  type: 'image' | 'video' | 'audio' | 'document';
 }
 
 export function MediaPreview({ src, alt, type }: MediaPreviewProps) {

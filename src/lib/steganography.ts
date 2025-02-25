@@ -40,7 +40,6 @@ export class SteganographyService {
     const salt = crypto.getRandomValues(new Uint8Array(16)); // 16 bytes salt
     const iv = crypto.getRandomValues(new Uint8Array(12));   // 12 bytes IV
     const password = new TextEncoder().encode(key);
-
     const derivedKey = await crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
@@ -73,7 +72,6 @@ export class SteganographyService {
   private static async decryptHiddenData(hiddenDataBinary: string, key: string): Promise<string> {
     const signatureLength = this.textToBinary(this.SIGNATURE).length; // 32 bits
     const signatureBinary = hiddenDataBinary.slice(0, signatureLength);
-
     if (signatureBinary !== this.textToBinary(this.SIGNATURE)) {
       // Old format: no encryption
       return this.binaryToText(hiddenDataBinary);
@@ -113,46 +111,87 @@ export class SteganographyService {
     }
   }
 
-  // Encode message into media with optional key
-  static async encode(file: File, message: string, key: string = ''): Promise<string> {
-    let hiddenDataBinary = key ? await this.encryptMessage(message, key) : this.textToBinary(message);
-    const totalLength = hiddenDataBinary.length;
-    if (totalLength > 2 ** 31 - 1) {
-      throw new Error("Message too long to encode");
-    }
-    const lengthBinary = totalLength.toString(2).padStart(32, '0');
-
-    if (file.type.startsWith('image/')) {
-      return this.encodeImage(file, lengthBinary, hiddenDataBinary);
-    } else if (file.type.startsWith('video/')) {
-      return this.encodeVideo(file, lengthBinary, hiddenDataBinary);
-    } else if (file.type.startsWith('audio/')) {
-      return this.encodeAudio(file, lengthBinary, hiddenDataBinary);
-    }
-    throw new Error("Unsupported file type");
+  // Check if file is a document type
+  private static isDocumentType(type: string): boolean {
+    const documentTypes = [
+      'text/plain',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ];
+    return documentTypes.includes(type);
   }
 
-  // Decode message from media with optional key
-  static async decode(file: File, key: string = ''): Promise<string> {
-    let hiddenDataBinary: string;
-    if (file.type.startsWith('image/')) {
-      hiddenDataBinary = await this.extractHiddenDataFromImage(file);
-    } else if (file.type.startsWith('video/')) {
-      hiddenDataBinary = await this.extractHiddenDataFromVideo(file);
-    } else if (file.type.startsWith('audio/')) {
-      hiddenDataBinary = await this.extractHiddenDataFromAudio(file);
-    } else {
-      throw new Error("Unsupported file type");
-    }
-    return this.decryptHiddenData(hiddenDataBinary, key);
+  // Encode message into document
+  private static async encodeDocument(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const arrayBuffer = e.target?.result as ArrayBuffer;
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // Check capacity
+        const totalBitsNeeded = 32 + hiddenDataBinary.length;
+        if (totalBitsNeeded > uint8Array.length) {
+          reject(new Error('Message is too long for this document'));
+          return;
+        }
+
+        // Encode length
+        for (let i = 0; i < 32; i++) {
+          uint8Array[i] = (uint8Array[i] & 254) | parseInt(lengthBinary[i]);
+        }
+
+        // Encode hidden data
+        for (let i = 0; i < hiddenDataBinary.length; i++) {
+          uint8Array[i + 32] = (uint8Array[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
+        }
+
+        const modifiedBlob = new Blob([uint8Array], { type: file.type });
+        resolve(modifiedBlob);
+      };
+      reader.onerror = () => reject(new Error('Failed to load document'));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // Extract hidden data from document
+  private static async extractHiddenDataFromDocument(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const arrayBuffer = e.target?.result as ArrayBuffer;
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // Decode length
+        let lengthBinary = '';
+        for (let i = 0; i < 32; i++) {
+          lengthBinary += (uint8Array[i] & 1).toString();
+        }
+        const totalLength = parseInt(lengthBinary, 2);
+
+        // Decode hidden data
+        let hiddenDataBinary = '';
+        for (let i = 32; i < totalLength + 32 && i < uint8Array.length; i++) {
+          hiddenDataBinary += (uint8Array[i] & 1).toString();
+        }
+
+        resolve(hiddenDataBinary);
+      };
+      reader.onerror = () => reject(new Error('Failed to load document'));
+      reader.readAsArrayBuffer(file);
+    });
   }
 
   // Image encoding
-  private static async encodeImage(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
+  private static async encodeImage(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const reader = new FileReader();
-
       reader.onload = (e) => {
         img.src = e.target?.result as string;
       };
@@ -172,24 +211,24 @@ export class SteganographyService {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
 
-        // Check capacity (corrected to use full data length)
         if (hiddenDataBinary.length > data.length - 32) {
           reject(new Error('Message is too long for this image'));
           return;
         }
 
-        // Encode length
         for (let i = 0; i < 32; i++) {
           data[i] = (data[i] & 254) | parseInt(lengthBinary[i]);
         }
 
-        // Encode hidden data
         for (let i = 0; i < hiddenDataBinary.length; i++) {
           data[i + 32] = (data[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
         }
 
         ctx.putImageData(imageData, 0, 0);
-        resolve(canvas.toDataURL());
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error('Failed to create blob'));
+        }, 'image/png');
       };
 
       img.onerror = () => reject(new Error('Failed to load image'));
@@ -202,7 +241,6 @@ export class SteganographyService {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const reader = new FileReader();
-
       reader.onload = (e) => {
         img.src = e.target?.result as string;
       };
@@ -224,13 +262,13 @@ export class SteganographyService {
 
         let lengthBinary = '';
         for (let i = 0; i < 32; i++) {
-          lengthBinary += data[i] & 1;
+          lengthBinary += (data[i] & 1).toString();
         }
         const totalLength = parseInt(lengthBinary, 2);
 
         let hiddenDataBinary = '';
-        for (let i = 32; i < totalLength + 32; i++) {
-          hiddenDataBinary += data[i] & 1;
+        for (let i = 32; i < totalLength + 32 && i < data.length; i++) {
+          hiddenDataBinary += (data[i] & 1).toString();
         }
 
         resolve(hiddenDataBinary);
@@ -242,102 +280,67 @@ export class SteganographyService {
   }
 
   // Video encoding
-  private static async encodeVideo(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
+  private static async encodeVideo(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
     return new Promise((resolve, reject) => {
-      const videoElement = document.createElement('video');
       const reader = new FileReader();
+      reader.onload = async (e) => {
+        const arrayBuffer = e.target?.result as ArrayBuffer;
+        const uint8Array = new Uint8Array(arrayBuffer);
 
-      reader.onload = (e) => {
-        videoElement.src = e.target?.result as string;
-      };
-
-      videoElement.onloadeddata = async () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Could not get canvas context'));
-          return;
-        }
-
-        canvas.width = videoElement.videoWidth;
-        canvas.height = videoElement.videoHeight;
-        ctx.drawImage(videoElement, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-
-        if (hiddenDataBinary.length > data.length - 32) {
-          reject(new Error('Message is too long for this video frame'));
+        if (hiddenDataBinary.length > uint8Array.length - 32) {
+          reject(new Error('Message is too long for this video file'));
           return;
         }
 
         for (let i = 0; i < 32; i++) {
-          data[i] = (data[i] & 254) | parseInt(lengthBinary[i]);
+          uint8Array[i] = (uint8Array[i] & 254) | parseInt(lengthBinary[i]);
         }
 
         for (let i = 0; i < hiddenDataBinary.length; i++) {
-          data[i + 32] = (data[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
+          uint8Array[i + 32] = (uint8Array[i + 32] & 254) | parseInt(hiddenDataBinary[i]);
         }
 
-        ctx.putImageData(imageData, 0, 0);
-        resolve(canvas.toDataURL());
+        const modifiedBlob = new Blob([uint8Array], { type: file.type });
+        resolve(modifiedBlob);
       };
 
-      videoElement.onerror = () => reject(new Error('Failed to load video'));
-      reader.readAsDataURL(file);
+      reader.onerror = () => reject(new Error('Failed to load video file'));
+      reader.readAsArrayBuffer(file);
     });
   }
 
   // Video decoding
   private static async extractHiddenDataFromVideo(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
-      const videoElement = document.createElement('video');
       const reader = new FileReader();
-
       reader.onload = (e) => {
-        videoElement.src = e.target?.result as string;
-      };
-
-      videoElement.onloadeddata = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Could not get canvas context'));
-          return;
-        }
-
-        canvas.width = videoElement.videoWidth;
-        canvas.height = videoElement.videoHeight;
-        ctx.drawImage(videoElement, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
+        const arrayBuffer = e.target?.result as ArrayBuffer;
+        const uint8Array = new Uint8Array(arrayBuffer);
 
         let lengthBinary = '';
         for (let i = 0; i < 32; i++) {
-          lengthBinary += data[i] & 1;
+          lengthBinary += (uint8Array[i] & 1).toString();
         }
         const totalLength = parseInt(lengthBinary, 2);
 
         let hiddenDataBinary = '';
-        for (let i = 32; i < totalLength + 32; i++) {
-          hiddenDataBinary += data[i] & 1;
+        for (let i = 32; i < totalLength + 32 && i < uint8Array.length; i++) {
+          hiddenDataBinary += (uint8Array[i] & 1).toString();
         }
 
         resolve(hiddenDataBinary);
       };
 
-      videoElement.onerror = () => reject(new Error('Failed to load video'));
-      reader.readAsDataURL(file);
+      reader.onerror = () => reject(new Error('Failed to load video file'));
+      reader.readAsArrayBuffer(file);
     });
   }
 
   // Audio encoding
-  private static async encodeAudio(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<string> {
+  private static async encodeAudio(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const audioContext = new AudioContext();
       const reader = new FileReader();
-
       reader.onload = async (e) => {
         try {
           const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
@@ -378,7 +381,7 @@ export class SteganographyService {
 
           const renderedBuffer = await offlineContext.startRendering();
           const wavBlob = this.bufferToWav(renderedBuffer);
-          resolve(URL.createObjectURL(wavBlob));
+          resolve(wavBlob);
         } catch (err) {
           reject(new Error('Failed to process audio file'));
         }
@@ -394,7 +397,6 @@ export class SteganographyService {
     return new Promise((resolve, reject) => {
       const audioContext = new AudioContext();
       const reader = new FileReader();
-
       reader.onload = async (e) => {
         try {
           const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
@@ -407,7 +409,7 @@ export class SteganographyService {
           const totalLength = parseInt(lengthBinary, 2);
 
           let hiddenDataBinary = '';
-          for (let i = 32; i < totalLength + 32; i++) {
+          for (let i = 32; i < totalLength + 32 && i < channelData.length; i++) {
             hiddenDataBinary += Math.round((channelData[i] * 10000) % 2);
           }
 
@@ -422,14 +424,13 @@ export class SteganographyService {
     });
   }
 
-  // Helper function to convert AudioBuffer to WAV (unchanged)
+  // Helper function to convert AudioBuffer to WAV
   private static bufferToWav(buffer: AudioBuffer): Blob {
     const numOfChannels = buffer.numberOfChannels;
     const length = buffer.length * numOfChannels * 2;
     const sampleRate = buffer.sampleRate;
     const arrayBuffer = new ArrayBuffer(44 + length);
     const view = new DataView(arrayBuffer);
-
     const writeString = (view: DataView, offset: number, string: string) => {
       for (let i = 0; i < string.length; i++) {
         view.setUint8(offset + i, string.charCodeAt(i));
@@ -459,5 +460,42 @@ export class SteganographyService {
     }
 
     return new Blob([arrayBuffer], { type: 'audio/wav' });
+  }
+
+  // Encode message into media with optional key
+  static async encode(file: File, message: string, key: string = ''): Promise<Blob> {
+    let hiddenDataBinary = key ? await this.encryptMessage(message, key) : this.textToBinary(message);
+    const totalLength = hiddenDataBinary.length;
+    if (totalLength > 2 ** 31 - 1) {
+      throw new Error("Message too long to encode");
+    }
+    const lengthBinary = totalLength.toString(2).padStart(32, '0');
+    if (file.type.startsWith('image/')) {
+      return this.encodeImage(file, lengthBinary, hiddenDataBinary);
+    } else if (file.type.startsWith('video/')) {
+      return this.encodeVideo(file, lengthBinary, hiddenDataBinary);
+    } else if (file.type.startsWith('audio/')) {
+      return this.encodeAudio(file, lengthBinary, hiddenDataBinary);
+    } else if (this.isDocumentType(file.type)) {
+      return this.encodeDocument(file, lengthBinary, hiddenDataBinary);
+    }
+    throw new Error("Unsupported file type");
+  }
+
+  // Decode message from media with optional key
+  static async decode(file: File, key: string = ''): Promise<string> {
+    let hiddenDataBinary: string;
+    if (file.type.startsWith('image/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromImage(file);
+    } else if (file.type.startsWith('video/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromVideo(file);
+    } else if (file.type.startsWith('audio/')) {
+      hiddenDataBinary = await this.extractHiddenDataFromAudio(file);
+    } else if (this.isDocumentType(file.type)) {
+      hiddenDataBinary = await this.extractHiddenDataFromDocument(file);
+    } else {
+      throw new Error("Unsupported file type");
+    }
+    return this.decryptHiddenData(hiddenDataBinary, key);
   }
 }
