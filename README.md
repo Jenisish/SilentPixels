@@ -1,7 +1,7 @@
 ```mermaid
 flowchart TD
     %% Frontend (Client-Side Application)
-    subgraph Frontend [Client (React SPA)]
+    subgraph Frontend [Client \(React SPA)\]
       A[Main App Component<br>(App.tsx)]
       B[Authentication Components<br>(Login, Signup, ResetPassword)]
       C[File Management Components<br>(FileUpload, ImagePreview, MediaPreview)]
