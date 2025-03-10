@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft, Search } from 'lucide-react';
+import { ArrowLeft, Search, Trash2 } from 'lucide-react';
 
 interface HistoryEntry {
   id: string;
@@ -75,6 +75,38 @@ export function History({ userId, onBack }: HistoryProps) {
     setSearchTerm(e.target.value);
   };
 
+  const clearAllHistory = async () => {
+    if (window.confirm('Are you sure you want to delete all history entries? This action cannot be undone.')) {
+      try {
+        const { error } = await supabase
+          .from('history')
+          .delete()
+          .eq('user_id', userId);
+        if (error) throw error;
+        setHistory([]);
+      } catch (error) {
+        console.error('Error clearing history:', error);
+        alert('Failed to clear history. Please try again.');
+      }
+    }
+  };
+
+  const deleteEntry = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this history entry?')) {
+      try {
+        const { error } = await supabase
+          .from('history')
+          .delete()
+          .eq('id', id);
+        if (error) throw error;
+        setHistory(history.filter(entry => entry.id !== id));
+      } catch (error) {
+        console.error('Error deleting entry:', error);
+        alert('Failed to delete entry. Please try again.');
+      }
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading history...</div>;
   }
@@ -131,6 +163,18 @@ export function History({ userId, onBack }: HistoryProps) {
 
         <hr className="h-5" />
 
+        {/* Clear all button */}
+        {history.length > 0 && (
+          <div className="flex justify-end mb-4">
+            <button
+              onClick={clearAllHistory}
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
+
         {/* History Cards */}
         {history.length === 0 ? (
           <p className="text-center text-gray-500 text-lg">No history found.</p>
@@ -139,8 +183,15 @@ export function History({ userId, onBack }: HistoryProps) {
             {history.map((entry) => (
               <div
                 key={entry.id}
-                className="bg-gray-50 p-4 rounded-lg shadow hover:shadow-md transition-shadow"
+                className="group relative bg-gray-50 p-4 rounded-lg shadow hover:shadow-md transition-shadow"
               >
+                <button
+                  onClick={() => deleteEntry(entry.id)}
+                  className="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="Delete entry"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
                 <div className="flex justify-between items-center mb-2">
                   <span className="font-semibold text-gray-800">
                     {entry.action.toUpperCase()}
