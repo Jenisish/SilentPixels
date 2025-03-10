@@ -337,60 +337,66 @@ export class SteganographyService {
   }
 
   // Audio encoding
-  private static async encodeAudio(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
-    return new Promise((resolve, reject) => {
-      const audioContext = new AudioContext();
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
-          const channelData = audioBuffer.getChannelData(0);
+private static async encodeAudio(file: File, lengthBinary: string, hiddenDataBinary: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const audioContext = new AudioContext();
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
+        const channelData = audioBuffer.getChannelData(0);
 
-          if (hiddenDataBinary.length > channelData.length - 32) {
-            reject(new Error('Message is too long for this audio file'));
-            return;
-          }
-
-          const modifiedBuffer = audioContext.createBuffer(
-            audioBuffer.numberOfChannels,
-            audioBuffer.length,
-            audioBuffer.sampleRate
-          );
-          const modifiedData = modifiedBuffer.getChannelData(0);
-          modifiedData.set(channelData);
-
-          for (let i = 0; i < 32; i++) {
-            modifiedData[i] = Math.floor(channelData[i] * 1000) / 1000 +
-              (parseInt(lengthBinary[i]) * 0.0001);
-          }
-
-          for (let i = 0; i < hiddenDataBinary.length; i++) {
-            modifiedData[i + 32] = Math.floor(channelData[i + 32] * 1000) / 1000 +
-              (parseInt(hiddenDataBinary[i]) * 0.0001);
-          }
-
-          const offlineContext = new OfflineAudioContext(
-            modifiedBuffer.numberOfChannels,
-            modifiedBuffer.length,
-            modifiedBuffer.sampleRate
-          );
-          const source = offlineContext.createBufferSource();
-          source.buffer = modifiedBuffer;
-          source.connect(offlineContext.destination);
-          source.start();
-
-          const renderedBuffer = await offlineContext.startRendering();
-          const wavBlob = this.bufferToWav(renderedBuffer);
-          resolve(wavBlob);
-        } catch (err) {
-          reject(new Error('Failed to process audio file'));
+        if (hiddenDataBinary.length > channelData.length - 32) {
+          reject(new Error('Message is too long for this audio file'));
+          return;
         }
-      };
 
-      reader.onerror = () => reject(new Error('Failed to load audio file'));
-      reader.readAsArrayBuffer(file);
-    });
-  }
+        const modifiedBuffer = audioContext.createBuffer(
+          audioBuffer.numberOfChannels,
+          audioBuffer.length,
+          audioBuffer.sampleRate
+        );
+
+        for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+          const originalChannelData = audioBuffer.getChannelData(c);
+          const modifiedChannelData = modifiedBuffer.getChannelData(c);
+          if (c === 0) {
+            modifiedChannelData.set(originalChannelData);
+            for (let i = 0; i < 32; i++) {
+              modifiedChannelData[i] = Math.floor(originalChannelData[i] * 1000) / 1000 +
+                (parseInt(lengthBinary[i]) * 0.0001);
+            }
+            for (let i = 0; i < hiddenDataBinary.length; i++) {
+              modifiedChannelData[i + 32] = Math.floor(originalChannelData[i + 32] * 1000) / 1000 +
+                (parseInt(hiddenDataBinary[i]) * 0.0001);
+            }
+          } else {
+            modifiedChannelData.set(originalChannelData);
+          }
+        }
+
+        const offlineContext = new OfflineAudioContext(
+          modifiedBuffer.numberOfChannels,
+          modifiedBuffer.length,
+          modifiedBuffer.sampleRate
+        );
+        const source = offlineContext.createBufferSource();
+        source.buffer = modifiedBuffer;
+        source.connect(offlineContext.destination);
+        source.start();
+
+        const renderedBuffer = await offlineContext.startRendering();
+        const wavBlob = this.bufferToWav(renderedBuffer);
+        resolve(wavBlob);
+      } catch (err) {
+        reject(new Error('Failed to process audio file'));
+      }
+    };
+
+    reader.onerror = () => reject(new Error('Failed to load audio file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
 
   // Audio decoding
   private static async extractHiddenDataFromAudio(file: File): Promise<string> {
@@ -450,13 +456,14 @@ export class SteganographyService {
     view.setUint16(34, 16, true);
     writeString(view, 36, 'data');
     view.setUint32(40, length, true);
-
-    const channelData = buffer.getChannelData(0);
     let offset = 44;
-    for (let i = 0; i < channelData.length; i++) {
-      const sample = Math.max(-1, Math.min(1, channelData[i]));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-      offset += 2;
+    for (let i = 0; i < buffer.length; i++) {
+      for (let c = 0; c < numOfChannels; c++) {
+        const channelData = buffer.getChannelData(c);
+        const sample = Math.max(-1, Math.min(1, channelData[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
     }
 
     return new Blob([arrayBuffer], { type: 'audio/wav' });
