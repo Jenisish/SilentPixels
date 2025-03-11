@@ -43,7 +43,7 @@ npm install
 ```
 
 Set up environment variables :
-Create a .env file in the root directory and add your Supabase credentials:
+- Create a .env file in the root directory and add your Supabase credentials:
 
 
 ```bash
@@ -57,7 +57,7 @@ Start the development server:
 npm run dev
 ```
 Open in Browser:
-Visit http://localhost:5173 (or the port shown in your terminal).
+- Visit http://localhost:5173 (or the port shown in your terminal).
 
 Usage 🚀
 ```bash
