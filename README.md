@@ -79,7 +79,7 @@ Filter by action type
 Search by filename
 ```
 
-## About Steganography
+## About Steganography 🧠
 Steganography is the art of hiding messages within other data, such as media files, without noticeably altering them. SilentPixels uses techniques like least significant bit (LSB) substitution for images and similar methods for other media types. Learn more on https://en.wikipedia.org/wiki/Steganography.
 
 
