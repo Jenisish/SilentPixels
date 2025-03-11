@@ -42,7 +42,9 @@ Install dependencies:
 npm install
 ```
 
-Set up environment variables (create .env file):
+Set up environment variables :
+Create a .env file in the root directory and add your Supabase credentials:
+
 
 ```bash
 VITE_SUPABASE_URL=your-supabase-url
@@ -54,6 +56,9 @@ Start the development server:
 
 npm run dev
 ```
+Open in Browser:
+Visit http://localhost:5173 (or the port shown in your terminal).
+
 Usage 🚀
 ```bash
 Sign Up/Login:
@@ -74,5 +79,10 @@ Filter by action type
 Search by filename
 ```
 
+## About Steganography
+Steganography is the art of hiding messages within other data, such as media files, without noticeably altering them. SilentPixels uses techniques like least significant bit (LSB) substitution for images and similar methods for other media types. Learn more on https://en.wikipedia.org/wiki/Steganography.
+
+
+#
 License 📄
 Distributed under the MIT License. See LICENSE for more information.
