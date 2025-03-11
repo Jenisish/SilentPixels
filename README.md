@@ -47,9 +47,9 @@ Set up environment variables (create .env file):
 ```bash
 VITE_SUPABASE_URL=your-supabase-url
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-Start the development server:
 ```
 
+Start the development server:
 ```bash
 
 npm run dev
