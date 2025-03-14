@@ -4,7 +4,7 @@ A modern web application for hiding secret messages in images, videos, audio fil
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![App Preview](./src/public/weblog.jpg)
+![App Preview](./src/public/blue.jpg)
 
 ## Features ✨
 
